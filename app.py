@@ -2,7 +2,8 @@ import os
 import streamlit as st
 from langchain_community.document_loaders import TextLoader, WebBaseLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_openai import ChatOpenAI
 from langchain_community.vectorstores import Chroma
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
@@ -21,16 +22,14 @@ st.warning("""
 *註：本系統僅作程序指引及學術參考，並不構成正式法律意見。*
 """)
 
-# --- 2. 獲取 API Key ---
-api_key = st.secrets.get("OPENAI_API_KEY")
-if not api_key:
-    st.error("❌ 找不到 API Key：請在 Streamlit Community Cloud 的 App Settings -> Secrets 中設定 `OPENAI_API_KEY`。")
+# --- 2. 獲取 GitHub Token (替代 OpenAI Key) ---
+github_token = st.secrets.get("GITHUB_TOKEN") or st.secrets.get("OPENAI_API_KEY")
+if not github_token:
+    st.error("❌ 找不到 Token：請在 Streamlit App Settings -> Secrets 中設定 `GITHUB_TOKEN`。")
     st.stop()
 
-os.environ["OPENAI_API_KEY"] = api_key
-
-# --- 3. 知識庫初始化 (Knowledge Base Initialization) ---
-@st.cache_resource(show_spinner="正在加載《調解條例》及外部守則知識庫...")
+# --- 3. 知識庫初始化 (使用免費本地 Embedding，節省 API 成本) ---
+@st.cache_resource(show_spinner="正在加載《調解條例》及知識庫...")
 def initialize_knowledge_base():
     documents = []
     
@@ -57,18 +56,25 @@ def initialize_knowledge_base():
         st.error("知識庫內容空白，請檢查 data/Cap620.md 檔案是否存在。")
         st.stop()
 
-    # 文本切塊 (Chunking)
+    # 文本切塊
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     splits = text_splitter.split_documents(documents)
     
-    # 建立向量資料庫 (Vector Store)
-    embeddings = OpenAIEmbeddings()
+    # 使用免費高質素的 HuggingFace 開源 Embedding 模型 (無需 API Key)
+    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
     vectorstore = Chroma.from_documents(documents=splits, embedding=embeddings)
     return vectorstore.as_retriever()
 
 retriever = initialize_knowledge_base()
 
-# --- 4. System Prompt 設定與 LCEL 鏈路組裝 ---
+# --- 4. 串接 GitHub Models API (使用免費 gpt-4o-mini) ---
+llm = ChatOpenAI(
+    model="gpt-4o-mini",
+    api_key=github_token,
+    base_url="https://models.inference.ai.azure.com", # GitHub Models 的 API 端點
+    temperature=0
+)
+
 system_prompt = (
     "你是一個專為香港新手調解員提供程序指引的 AI 助手。"
     "你必須遵守以下嚴格管治規則：\n"
@@ -84,13 +90,9 @@ prompt = ChatPromptTemplate.from_messages([
     ("human", "{input}"),
 ])
 
-llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
-
-# 將檢索到的文本格式化合併
 def format_docs(docs):
     return "\n\n".join(doc.page_content for doc in docs)
 
-# LCEL 鏈路 (不依賴 langchain.chains，極度穩定)
 rag_chain = (
     {"context": retriever | format_docs, "input": RunnablePassthrough()}
     | prompt
@@ -98,22 +100,19 @@ rag_chain = (
     | StrOutputParser()
 )
 
-# --- 5. 對話介面與用戶互動 (Chat Interface) ---
+# --- 5. 對話介面 ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# 顯示歷史訊息
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# 接收用戶輸入
 if user_query := st.chat_input("請輸入關於香港調解程序或保密條例的問題..."):
     st.session_state.messages.append({"role": "user", "content": user_query})
     with st.chat_message("user"):
         st.markdown(user_query)
 
-    # 生成回答
     with st.chat_message("assistant"):
         with st.spinner("檢索《調解條例》與守則中..."):
             try:
