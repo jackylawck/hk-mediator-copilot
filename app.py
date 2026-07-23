@@ -27,17 +27,18 @@ if not github_token:
     st.error("❌ 找不到 Token：請在 Streamlit App Settings -> Secrets 中設定 `GITHUB_TOKEN` 或 `OPENAI_API_KEY`。")
     st.stop()
 
-# --- 3. 知識庫初始化 (Cap 620 + PD31/31.1 + 官方簡介 + 司法機構 FAQ + 外部守則) ---
-@st.cache_resource(show_spinner="正在加載《調解條例》、實務指示、官方簡介及守則知識庫...")
+# --- 3. 知識庫初始化 (Cap 620 + Cap 631 + PD31/31.1 + 官方簡介 + FAQ + 外部守則) ---
+@st.cache_resource(show_spinner="正在加載《調解條例》、《道歉條例》、實務指示及守則知識庫...")
 def initialize_knowledge_base():
     documents = []
     
-    # 策略 A: 載入本地法例、實務指示及官方簡介 (Cap 620, PD 31, PD 31.1, Mediation_Intro)
+    # 策略 A: 載入本地法例、實務指示及立法框架 Markdown 文件
     local_files = [
         "data/Cap620.md", 
         "data/PD31.md", 
         "data/PD31_1.md",
-        "data/Mediation_Intro.md"
+        "data/Mediation_Intro.md",
+        "data/Legal_Framework.md"  # 新增：道歉條例與立法框架
     ]
     for file_path in local_files:
         try:
@@ -88,9 +89,9 @@ llm = ChatOpenAI(
 system_prompt = (
     "你是一個專為香港新手調解員提供程序指引的 AI 助手。"
     "你必須遵守以下嚴格管治規則：\n"
-    "1. 你的回答【必須且只能】基於提供的 Context（香港法例第620章《調解條例》、實務指示 PD 31 / PD 31.1、司法機構調解官方簡介與 FAQ、HKMAAL 守則、HKMC 規則或 HKIAC 調解規則）。\n"
+    "1. 你的回答【必須且只能】基於提供的 Context（香港法例第620章《調解條例》、第631章《道歉條例》、實務指示 PD 31 / PD 31.1、司法機構調解官方簡介與 FAQ、HKMAAL 守則、HKMC 規則或 HKIAC 調解規則）。\n"
     "2. 如果 Context 中沒有明確答案，你必須回答：『根據現有知識庫，無法提供確切答案，建議諮詢資深調解員或參考律師意見。』絕對不允許憑空捏造法律條文或法律意見。\n"
-    "3. 在回答中，必須明確引用資料來源（例如：『根據司法機構《甚麽是調解？》官方簡介』、『根據《調解條例》第 8 條』等）。\n"
+    "3. 在回答中，必須明確引用資料來源（例如：『根據《道歉條例》（第631章）第 7 條』或『根據《調解條例》第 8 條』等）。\n"
     "4. 如果用戶在問題中提及看似真實的人名、公司名或機密數據，你必須拒絕回答，並提示其注意《調解條例》的保密條款。\n\n"
     "Context:\n{context}"
 )
@@ -118,13 +119,13 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-if user_query := st.chat_input("請輸入關於香港調解程序、司法機構指引或保密條例的問題..."):
+if user_query := st.chat_input("請輸入關於香港調解程序、道歉條例、司法機構指引或保密條例的問題..."):
     st.session_state.messages.append({"role": "user", "content": user_query})
     with st.chat_message("user"):
         st.markdown(user_query)
 
     with st.chat_message("assistant"):
-        with st.spinner("檢索《調解條例》、實務指示及司法機構官方簡介中..."):
+        with st.spinner("檢索《調解條例》、《道歉條例》及實務指示中..."):
             try:
                 answer = rag_chain.invoke(user_query)
                 st.markdown(answer)
